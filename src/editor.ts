@@ -1,3 +1,4 @@
+import { editorInfoField } from 'obsidian';
 import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import {
 	Decoration,
@@ -13,7 +14,7 @@ import { CompletionSession, type CompletionClient } from './completion';
 import { snapContext } from './context';
 import { countTypedCharacters } from './typing';
 import { Debouncer } from './debounce';
-import { type GhostCompleteSettings, type ResolvedProvider } from './settings';
+import { isExcludedNote, type GhostCompleteSettings, type ResolvedProvider } from './settings';
 
 export type StatusPhase = 'on' | 'off' | 'loading' | 'error' | 'no-key';
 
@@ -114,7 +115,7 @@ export function dismissGhost(view: EditorView): boolean {
 }
 
 export function notifyGhostSettings(view: EditorView): void {
-	view.dispatch({ userEvent: 'ghost-complete.refresh' });
+	view.dispatch({ effects: ghostEffect.of(null), userEvent: 'ghost-complete.refresh' });
 }
 
 export function createGhostExtension(host: GhostHost): Extension {
@@ -166,7 +167,6 @@ class GhostController {
 			this.typedCharacters = 0;
 			if (!this.host.getSettings().enabled) {
 				this.stop();
-				this.clearGhostSoon();
 				this.host.setPhase('off');
 				return;
 			}
@@ -195,6 +195,10 @@ class GhostController {
 		this.stop();
 	}
 
+	private excluded(): boolean {
+		return isExcludedNote(this.view.state.field(editorInfoField, false)?.file?.path, this.host.getSettings().excludedFolders);
+	}
+
 	private schedule(): void {
 		this.stop();
 		const settings = this.host.getSettings();
@@ -202,7 +206,7 @@ class GhostController {
 			this.host.setPhase('off');
 			return;
 		}
-		if (!this.view.hasFocus) return;
+		if (!this.view.hasFocus || this.excluded()) return;
 		if (this.typedCharacters < settings.minTypedChars) {
 			this.showIdlePhase();
 			return;
@@ -231,7 +235,7 @@ class GhostController {
 		const token = this.token;
 		const epoch = this.host.getEpoch();
 		const settings = this.host.getSettings();
-		if (!settings.enabled || !this.view.hasFocus) return;
+		if (!settings.enabled || !this.view.hasFocus || this.excluded()) return;
 		const selection = this.view.state.selection;
 		if (selection.ranges.length !== 1 || !selection.main.empty) return;
 
@@ -253,7 +257,7 @@ class GhostController {
 		}
 
 		const resolved = await this.host.getResolvedProvider();
-		if (this.destroyed || token !== this.token || epoch !== this.host.getEpoch() || !this.view.hasFocus) return;
+		if (this.destroyed || token !== this.token || epoch !== this.host.getEpoch() || !this.view.hasFocus || this.excluded()) return;
 		if (!resolved.apiKey) {
 			this.host.reportMissingKey();
 			return;
@@ -270,7 +274,7 @@ class GhostController {
 				maxTokens: clamp(settings.maxTokens, 8, 512),
 			});
 			if (this.destroyed || token !== this.token || epoch !== this.host.getEpoch()) return;
-			if (!this.view.hasFocus) return;
+			if (!this.view.hasFocus || this.excluded()) return;
 			const current = this.view.state.selection.main;
 			if (!current.empty || current.head !== cursor || !text) {
 				this.showIdlePhase();
