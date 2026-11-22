@@ -1,0 +1,20 @@
+.ghost-complete-suggestion {
+	color: var(--text-faint);
+	font-style: italic;
+	opacity: 0.85;
+	pointer-events: none;
+	user-select: none;
+	white-space: pre-wrap;
+}
+
+.ghost-complete-status {
+	cursor: pointer;
+}
+
+.ghost-complete-model-input {
+	width: 18em;
+}
+
+.ghost-complete-settings-note {
+	color: var(--text-muted);
+}

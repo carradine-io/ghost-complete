@@ -1,0 +1,9 @@
+{
+	"id": "ghost-complete",
+	"name": "Ghost Complete",
+	"version": "0.1.0",
+	"minAppVersion": "1.13.2",
+	"description": "Inline AI ghost-text autocomplete for Markdown notes, using OpenRouter or Groq.",
+	"author": "James Hicks",
+	"isDesktopOnly": true
+}
