@@ -7,7 +7,9 @@ import {
 	buildChatRequest,
 	buildRequestForSettings,
 	cacheKey,
+	formatConnectionReport,
 	friendlyHttpError,
+	probeConnection,
 	readCompletionContent,
 	redactSecrets,
 	type CompletionClient,
@@ -47,29 +49,30 @@ describe('provider routing', () => {
 	it('keeps each provider key on that provider URL when the provider changes', () => {
 		const settings = normalizeSettings({
 			provider: 'openrouter',
-			apiKeys: { openrouter: 'openrouter-test-key', groq: 'groq-test-key' },
+			apiKeys: { openrouter: 'sk-or-v1_test_key', groq: 'gsk_test_key' },
 			model: 'custom/model',
 		});
 
 		const openrouter = resolveProvider(settings);
 		expect(openrouter.baseUrl).toBe('https://openrouter.ai/api/v1');
-		expect(openrouter.apiKey).toBe('openrouter-test-key');
+		expect(openrouter.directKey).toBe('sk-or-v1_test_key');
 		expect(openrouter.model).toBe('custom/model');
 
 		selectProvider(settings, 'groq');
 		const groq = resolveProvider(settings);
 		expect(groq.id).toBe('groq');
 		expect(groq.baseUrl).toBe('https://api.groq.com/openai/v1');
-		expect(groq.apiKey).toBe('groq-test-key');
+		expect(groq.directKey).toBe('gsk_test_key');
 		expect(groq.model).toBe('openai/gpt-oss-20b');
-		expect(settings.apiKeys.openrouter).toBe('openrouter-test-key');
-		expect(settings.apiKeys.groq).toBe('groq-test-key');
+		expect(settings.apiKeys.openrouter).toBe('sk-or-v1_test_key');
+		expect(settings.apiKeys.groq).toBe('gsk_test_key');
 	});
 
 	it('sends an OpenRouter key only to OpenRouter', () => {
 		const request = buildChatRequest(input());
 		expect(request.url).toBe('https://openrouter.ai/api/v1/chat/completions');
 		expect(request.headers.Authorization).toBe('Bearer openrouter-test-key');
+		expect(request.headers['x-api-key']).toBe('openrouter-test-key');
 		expect(request.url).not.toContain('openrouter-test-key');
 		expect(request.body).not.toContain('openrouter-test-key');
 		expect(request.headers['X-Title']).toBe('Ghost Complete');
@@ -154,6 +157,23 @@ describe('provider routing', () => {
 		})).toBeNull();
 		expect(friendlyHttpError(401, 'Missing Authentication header', 'OpenRouter', false))
 			.toBe('No API key is set for OpenRouter.');
+	});
+
+	it('uses the password-field key when secret storage returns nothing', () => {
+		const settings = normalizeSettings({
+			provider: 'openrouter',
+			apiKeys: { openrouter: 'sk-or-v1_password_key', groq: 'gsk_other_provider_key' },
+			secretIds: { openrouter: 'missing-secret', groq: 'ghost-groq' },
+		});
+		const request = buildRequestForSettings(settings, () => null, {
+			prefix: 'Hello',
+			suffix: '',
+			maxTokens: 16,
+		});
+		expect(request?.headers.Authorization).toBe('Bearer sk-or-v1_password_key');
+		expect(request?.headers.Authorization).not.toContain('missing-secret');
+		expect(request?.url).toBe('https://openrouter.ai/api/v1/chat/completions');
+		expect(request?.body).not.toContain('gsk_other_provider_key');
 	});
 
 	it('omits Groq reasoning fields for models that are not gpt-oss', () => {
@@ -285,14 +305,41 @@ describe('CompletionSession', () => {
 		};
 		const session = new CompletionSession(new ChatCompletionClient(http), new CompletionCache());
 		await expect(session.request(input())).rejects.toThrow(
-			'OpenRouter rejected the API key. Check the key linked for this provider.',
+			'OpenRouter rejected the API key (HTTP 401): rejected [redacted]',
 		);
 		try {
 			await session.request(input());
 		} catch (error) {
 			const message = error instanceof Error ? error.message : '';
 			expect(message).not.toContain('openrouter-test-key');
-			expect(message).not.toContain('Missing Authentication header');
 		}
+	});
+
+	it('reports a connection test without revealing the key', async () => {
+		const apiKey = 'sk-or-v1_password_key';
+		const request = buildChatRequest(input({ apiKey }));
+		const http: HttpPost = {
+			async post() {
+				return {
+					status: 401,
+					body: JSON.stringify({ error: { message: `Missing Authentication header ${apiKey}` } }),
+				};
+			},
+		};
+		const outcome = await probeConnection(http, request, apiKey);
+		const report = formatConnectionReport({
+			providerLabel: 'OpenRouter',
+			keyFound: true,
+			status: outcome.status,
+			providerMessage: outcome.providerMessage,
+		});
+		expect(report).toBe('OpenRouter: key found: yes. HTTP 401. Missing Authentication header [redacted]');
+		expect(report).not.toContain(apiKey);
+		expect(formatConnectionReport({
+			providerLabel: 'OpenRouter',
+			keyFound: false,
+			status: null,
+			providerMessage: '',
+		})).toBe('OpenRouter: key found: no. No request was sent.');
 	});
 });

@@ -15,7 +15,7 @@ export function createObsidianHttp(): HttpPost {
 					url,
 					method: 'POST',
 					contentType: 'application/json',
-					headers,
+					headers: plainHeaders(headers),
 					body,
 					throw: false,
 				}),
@@ -24,4 +24,12 @@ export function createObsidianHttp(): HttpPost {
 			return { status: response.status, body: response.text };
 		},
 	};
+}
+
+function plainHeaders(headers: Record<string, string>): Record<string, string> {
+	const copy: Record<string, string> = {};
+	for (const [name, value] of Object.entries(headers)) {
+		if (typeof value === 'string' && value.length > 0) copy[name] = value;
+	}
+	return copy;
 }

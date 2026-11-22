@@ -2,7 +2,7 @@ import { AbortError, isAbortError } from './abort';
 import { CompletionCache } from './cache';
 import { postprocessCompletion } from './postprocess';
 import { PROVIDERS, type ProviderId } from './providers';
-import { materializeApiKey, resolveProvider, type GhostCompleteSettings } from './settings';
+import { chooseCredential, resolveProvider, type GhostCompleteSettings } from './settings';
 
 export interface CompletionInput {
 	providerId: ProviderId;
@@ -70,6 +70,7 @@ export function buildChatRequest(input: CompletionInput): ChatHttpRequest {
 
 	if (input.providerId === 'openrouter') {
 		headers['X-Title'] = 'Ghost Complete';
+		headers['x-api-key'] = input.apiKey;
 		payload.max_tokens = input.maxTokens;
 		payload.reasoning = { effort: 'none', exclude: true };
 	} else {
@@ -103,7 +104,8 @@ export function buildRequestForSettings(
 	context: RequestContext,
 ): ChatHttpRequest | null {
 	const resolved = resolveProvider(settings);
-	const apiKey = materializeApiKey(resolved.apiKey, readSecret);
+	const secretValue = resolved.secretId ? readSecret(resolved.secretId) : null;
+	const apiKey = chooseCredential(resolved.secretId, secretValue, resolved.directKey);
 	if (!apiKey) return null;
 	return buildChatRequest({
 		providerId: resolved.id,
@@ -122,9 +124,48 @@ export function friendlyHttpError(
 	hasApiKey: boolean,
 ): string {
 	if (status === 401 && !hasApiKey) return `No API key is set for ${providerLabel}.`;
-	if (status === 401) return `${providerLabel} rejected the API key. Check the key linked for this provider.`;
+	if (status === 401) {
+		const cleaned = detail.trim();
+		return cleaned
+			? `${providerLabel} rejected the API key (HTTP 401): ${cleaned}`
+			: `${providerLabel} rejected the API key (HTTP 401).`;
+	}
 	const cleaned = detail.trim();
 	return cleaned ? `Request failed (${status}): ${cleaned}` : `Request failed (${status}).`;
+}
+
+export interface ConnectionReport {
+	providerLabel: string;
+	keyFound: boolean;
+	status: number | null;
+	providerMessage: string;
+}
+
+export function formatConnectionReport(report: ConnectionReport): string {
+	if (!report.keyFound) return `${report.providerLabel}: key found: no. No request was sent.`;
+	const status = report.status === null ? 'no response' : `HTTP ${report.status}`;
+	const detail = report.providerMessage ? ` ${report.providerMessage}` : '';
+	return `${report.providerLabel}: key found: yes. ${status}.${detail}`;
+}
+
+export async function probeConnection(
+	http: HttpPost,
+	request: ChatHttpRequest,
+	apiKey: string,
+): Promise<Pick<ConnectionReport, 'status' | 'providerMessage'>> {
+	try {
+		const response = await http.post(request.url, request.headers, request.body, new AbortController().signal);
+		if (response.status >= 200 && response.status < 300) {
+			return { status: response.status, providerMessage: '' };
+		}
+		return {
+			status: response.status,
+			providerMessage: redactSecrets(readErrorMessage(response.body), [apiKey]),
+		};
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'The request failed';
+		return { status: null, providerMessage: redactSecrets(message, [apiKey]) };
+	}
 }
 
 export function cacheKey(input: Pick<CompletionInput, 'providerId' | 'model' | 'prefix' | 'suffix' | 'maxTokens'>): string {

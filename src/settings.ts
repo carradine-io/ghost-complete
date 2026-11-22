@@ -3,7 +3,10 @@ import { isProviderId, PROVIDERS, type ProviderId } from './providers';
 export interface GhostCompleteSettings {
 	enabled: boolean;
 	provider: ProviderId;
+	/** Raw keys saved by the password fields. */
 	apiKeys: Record<ProviderId, string>;
+	/** Optional Obsidian secret-storage ids. The secret value is not stored here. */
+	secretIds: Record<ProviderId, string>;
 	/** Editable model id. Selecting a provider replaces this with that provider's suggested default. */
 	model: string;
 	debounceMs: number;
@@ -15,14 +18,21 @@ export interface GhostCompleteSettings {
 export interface ResolvedProvider {
 	id: ProviderId;
 	baseUrl: string;
-	apiKey: string;
 	model: string;
+	directKey: string;
+	secretId: string;
+	/** Credential that should be sent. Empty until chooseCredential fills it. */
+	apiKey: string;
 }
 
 export const DEFAULT_SETTINGS: GhostCompleteSettings = {
 	enabled: true,
 	provider: 'openrouter',
 	apiKeys: {
+		openrouter: '',
+		groq: '',
+	},
+	secretIds: {
 		openrouter: '',
 		groq: '',
 	},
@@ -47,6 +57,11 @@ export function normalizeSettings(data: unknown): GhostCompleteSettings {
 	const raw = isRecord(data) ? data : {};
 	const provider = isProviderId(raw.provider) ? raw.provider : DEFAULT_SETTINGS.provider;
 	const apiKeys = isRecord(raw.apiKeys) ? raw.apiKeys : {};
+	const storedSecretIds = isRecord(raw.secretIds) ? raw.secretIds : null;
+	const hadSecretIds = storedSecretIds !== null;
+	const secretIds = storedSecretIds ?? {};
+	const openrouter = migrateStoredKey(asString(apiKeys.openrouter), asString(secretIds.openrouter), hadSecretIds);
+	const groq = migrateStoredKey(asString(apiKeys.groq), asString(secretIds.groq), hadSecretIds);
 	const model = typeof raw.model === 'string' && raw.model.trim()
 		? raw.model
 		: PROVIDERS[provider].defaultModel;
@@ -55,8 +70,12 @@ export function normalizeSettings(data: unknown): GhostCompleteSettings {
 		enabled: raw.enabled !== false,
 		provider,
 		apiKeys: {
-			openrouter: asString(apiKeys.openrouter),
-			groq: asString(apiKeys.groq),
+			openrouter: openrouter.key,
+			groq: groq.key,
+		},
+		secretIds: {
+			openrouter: openrouter.secretId,
+			groq: groq.secretId,
 		},
 		model,
 		debounceMs: parseBoundedInt(raw.debounceMs, DEFAULT_SETTINGS.debounceMs, 50, 5000),
@@ -83,33 +102,39 @@ export function resolveProvider(settings: GhostCompleteSettings): ResolvedProvid
 	return {
 		id: provider.id,
 		baseUrl: provider.baseUrl,
-		apiKey: settings.apiKeys[provider.id].trim(),
 		model: settings.model.trim() || provider.defaultModel,
+		directKey: settings.apiKeys[provider.id],
+		secretId: settings.secretIds[provider.id].trim(),
+		apiKey: '',
 	};
+}
+
+/**
+ * Prefer a resolved secret. Otherwise use the password-field key.
+ * An unresolved secret id is never returned, so it cannot be sent as a bearer token.
+ */
+export function chooseCredential(secretId: string, secretValue: string | null, directKey: string): string {
+	const fromSecret = typeof secretValue === 'string' ? normalizeCredential(secretValue) : '';
+	if (fromSecret) return fromSecret;
+	const direct = normalizeCredential(directKey);
+	if (!direct) return '';
+	if (secretId && direct === secretId.trim()) return '';
+	if (!secretId && looksLikeSecretId(direct)) return '';
+	return direct;
+}
+
+export function looksLikeSecretId(value: string): boolean {
+	return /^[a-z0-9-]{1,64}$/.test(value);
+}
+
+function migrateStoredKey(rawKey: string, rawSecretId: string, hadSecretIds: boolean): { key: string; secretId: string } {
+	if (rawSecretId) return { key: rawKey, secretId: rawSecretId };
+	if (!hadSecretIds && looksLikeSecretId(rawKey)) return { key: '', secretId: rawKey };
+	return { key: rawKey, secretId: '' };
 }
 
 export function storedSecrets(settings: GhostCompleteSettings): string[] {
 	return [settings.apiKeys.openrouter, settings.apiKeys.groq];
-}
-
-/**
- * The secret setting stores an id, not the key. Read the key from Obsidian secret storage.
- * A missing secret stays empty so the id is never sent as a bearer token.
- */
-export function materializeApiKey(
-	storedReference: string,
-	readSecret: (id: string) => string | null,
-): string {
-	const reference = storedReference.trim();
-	if (!reference) return '';
-	let secret: string | null;
-	try {
-		secret = readSecret(reference);
-	} catch {
-		return '';
-	}
-	if (typeof secret !== 'string') return '';
-	return normalizeCredential(secret);
 }
 
 /** Make a credential safe to put in an Authorization header. */
