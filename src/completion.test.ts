@@ -45,8 +45,8 @@ describe('completion prompt', () => {
 		const request = buildChatRequest(input({ prefix, suffix }));
 		const payload = JSON.parse(request.body) as { messages: { content: string }[] };
 		const prompt = payload.messages[0]?.content;
-		expect(prompt).toContain('If the thought is unfinished, suggest only enough words to finish it.');
-		expect(prompt).toContain('If the sentence is complete, suggest one short follow-up sentence.');
+		expect(prompt).toContain('Finish an unfinished sentence naturally, taking into account any text after the cursor.');
+		expect(prompt).toContain('After a complete sentence, suggest one sentence that develops the thought using details already in the note.');
 		expect(prompt).toContain(`Text before the cursor:\n${prefix}\n\nText after the cursor:\n${suffix}\n`);
 	});
 });

@@ -36,8 +36,10 @@ export function buildPrompt(prefix: string, suffix: string): string {
 	return [
 		'Continue this Markdown note at the cursor.',
 		'Use the text on both sides of the cursor to decide whether the sentence is complete.',
-		'If the thought is unfinished, suggest only enough words to finish it.',
-		'If the sentence is complete, suggest one short follow-up sentence.',
+		'Finish an unfinished sentence naturally, taking into account any text after the cursor.',
+		'After a complete sentence, suggest one sentence that develops the thought using details already in the note.',
+		'Match the writer’s voice, perspective, and sentence rhythm. Let the idea determine the length.',
+		'Avoid generic facts, repetitive openings, and invented personal details.',
 		'Return only the insertion on the current line.',
 		'Do not repeat text that already appears before the cursor.',
 		'Do not wrap the reply in quotes or code fences.',
