@@ -1,4 +1,4 @@
-import { PluginSettingTab, type App, type SettingDefinitionItem } from 'obsidian';
+import { Notice, PluginSettingTab, type App, type SettingDefinitionItem } from 'obsidian';
 import { PROVIDERS, type ProviderId } from './providers';
 import { parseBoundedInt, selectProvider, type GhostCompleteSettings } from './settings';
 import type GhostCompletePlugin from './main';
@@ -48,6 +48,14 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 			secretKey('OpenRouter API key', 'openrouter'),
 			secretKey('Groq API key', 'groq'),
 			{
+				name: 'Test connection',
+				desc: this.plugin.lastConnectionReport
+					|| 'Sends one short request with the selected provider. The result shows whether a key was found, the HTTP status, and the provider error. The key is not shown.',
+				action: () => {
+					void this.runConnectionTest();
+				},
+			},
+			{
 				name: 'Model',
 				desc: `Suggested for ${provider.label}: ${provider.defaultModel}. Edit this after choosing a provider if you want a different model id.`,
 				control: {
@@ -88,10 +96,10 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 				return settings.provider;
 			case 'model':
 				return settings.model;
-			case 'openrouterApiKey':
-				return settings.apiKeys.openrouter;
-			case 'groqApiKey':
-				return settings.apiKeys.groq;
+			case 'openrouterSecretId':
+				return settings.secretIds.openrouter;
+			case 'groqSecretId':
+				return settings.secretIds.groq;
 			case 'debounceMs':
 				return settings.debounceMs;
 			case 'maxTokens':
@@ -130,11 +138,13 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 			case 'model':
 				if (typeof value === 'string') settings.model = value;
 				break;
-			case 'openrouterApiKey':
-				if (typeof value === 'string') settings.apiKeys.openrouter = value;
+			case 'openrouterSecretId':
+				if (typeof value === 'string') settings.secretIds.openrouter = value;
+				else if (value === null) settings.secretIds.openrouter = '';
 				break;
-			case 'groqApiKey':
-				if (typeof value === 'string') settings.apiKeys.groq = value;
+			case 'groqSecretId':
+				if (typeof value === 'string') settings.secretIds.groq = value;
+				else if (value === null) settings.secretIds.groq = '';
 				break;
 			case 'debounceMs':
 			case 'maxTokens':
@@ -146,6 +156,13 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 				return;
 		}
 		await this.plugin.saveSettings();
+	}
+
+	private async runConnectionTest(): Promise<void> {
+		const report = await this.plugin.testConnection();
+		this.plugin.lastConnectionReport = report;
+		new Notice(`Ghost Complete: ${report}`, 10000);
+		this.update();
 	}
 
 	private setNumber(
@@ -162,10 +179,10 @@ function secretKey(name: string, providerId: ProviderId): SettingDefinitionItem 
 	const provider = PROVIDERS[providerId];
 	return {
 		name,
-		desc: `Link a secret from Obsidian's secret storage. Its value is sent only to ${provider.baseUrl}.`,
+		desc: `Link a secret from Obsidian's secret storage. Only the secret id is saved in plugin data. The key is sent only to ${provider.baseUrl}.`,
 		control: {
 			type: 'secret',
-			key: providerId === 'openrouter' ? 'openrouterApiKey' : 'groqApiKey',
+			key: providerId === 'openrouter' ? 'openrouterSecretId' : 'groqSecretId',
 		},
 	};
 }

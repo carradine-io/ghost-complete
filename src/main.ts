@@ -1,16 +1,35 @@
 import { EditorView } from '@codemirror/view';
 import { MarkdownView, Notice, Plugin } from 'obsidian';
 import { CompletionCache } from './cache';
-import { ChatCompletionClient, sanitizeError, type CompletionClient } from './completion';
+import {
+	ChatCompletionClient,
+	buildChatRequest,
+	formatConnectionReport,
+	probeConnection,
+	sanitizeError,
+	type CompletionClient,
+} from './completion';
 import { createGhostExtension, notifyGhostSettings, type GhostHost, type StatusPhase } from './editor';
 import { createObsidianHttp } from './http';
-import { materializeApiKey, normalizeSettings, resolveProvider, storedSecrets, type GhostCompleteSettings, type ResolvedProvider } from './settings';
+import { PROVIDERS } from './providers';
+import {
+	credentialFromSecret,
+	prepareSettings,
+	normalizeSettings,
+	resolveProvider,
+	storedSecrets,
+	type GhostCompleteSettings,
+	type ResolvedProvider,
+} from './settings';
 import { GhostCompleteSettingTab } from './settings-tab';
 
 export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	settings: GhostCompleteSettings = normalizeSettings(undefined);
 	readonly cache = new CompletionCache();
-	readonly client: CompletionClient = new ChatCompletionClient(createObsidianHttp());
+	private readonly http = createObsidianHttp();
+	readonly client: CompletionClient = new ChatCompletionClient(this.http);
+	lastConnectionReport = '';
+	private activeApiKey = '';
 
 	private statusBar: HTMLElement | null = null;
 	private settingsTab: GhostCompleteSettingTab | null = null;
@@ -21,6 +40,7 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		await this.getResolvedProvider();
 
 		this.settingsTab = new GhostCompleteSettingTab(this.app, this);
 		this.addSettingTab(this.settingsTab);
@@ -48,12 +68,12 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 		return this.settings;
 	}
 
-	getResolvedProvider(): ResolvedProvider {
+	async getResolvedProvider(): Promise<ResolvedProvider> {
 		const resolved = resolveProvider(this.settings);
-		return {
-			...resolved,
-			apiKey: materializeApiKey(resolved.apiKey, (id) => readPluginSecret(this, id)),
-		};
+		const secretValue = await readSecretValue(this.app.secretStorage, resolved.secretId);
+		const apiKey = credentialFromSecret(resolved.secretId, secretValue);
+		this.activeApiKey = apiKey;
+		return { ...resolved, apiKey };
 	}
 
 	getEpoch(): number {
@@ -61,11 +81,14 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = normalizeSettings(await this.loadData());
+		const prepared = prepareSettings(await this.loadData());
+		this.settings = prepared.settings;
+		if (prepared.removedPlaintext) await this.saveData(this.settings);
 	}
 
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+		await this.getResolvedProvider();
 		this.refreshStatus();
 	}
 
@@ -85,10 +108,39 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 		this.refreshStatus();
 	}
 
-	reportError(error: unknown): void {
-		const secrets = [...storedSecrets(this.settings), this.getResolvedProvider().apiKey];
-		const message = sanitizeError(error, secrets);
-		this.setPhase('error');
+	async testConnection(): Promise<string> {
+		const resolved = await this.getResolvedProvider();
+		const providerLabel = PROVIDERS[resolved.id].label;
+		if (!resolved.apiKey) {
+			return formatConnectionReport({
+				providerLabel,
+				keyFound: false,
+				status: null,
+				providerMessage: '',
+			});
+		}
+		const request = buildChatRequest({
+			providerId: resolved.id,
+			apiKey: resolved.apiKey,
+			model: resolved.model,
+			prefix: 'Hi',
+			suffix: '',
+			maxTokens: 1,
+		});
+		const outcome = await probeConnection(this.http, request, resolved.apiKey);
+		return formatConnectionReport({
+			providerLabel,
+			keyFound: true,
+			status: outcome.status,
+			providerMessage: outcome.providerMessage,
+		});
+	}
+
+	reportMissingKey(): void {
+		const providerLabel = PROVIDERS[this.settings.provider].label;
+		const message = `No API key set for ${providerLabel}.`;
+		this.activeApiKey = '';
+		this.setPhase('no-key');
 		const now = Date.now();
 		if (message === this.lastError && now - this.lastErrorAt < 8000) return;
 		this.lastError = message;
@@ -96,9 +148,20 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 		new Notice(`Ghost Complete: ${message}`, 6000);
 	}
 
+	reportError(error: unknown): void {
+		const secrets = [...storedSecrets(this.settings), this.activeApiKey];
+		const message = sanitizeError(error, secrets);
+		this.setPhase('error');
+		const now = Date.now();
+		if (message === this.lastError && now - this.lastErrorAt < 8000) return;
+		this.lastError = message;
+		this.lastErrorAt = now;
+		new Notice(`Ghost Complete: ${message}`, 8000);
+	}
+
 	refreshStatus(): void {
 		if (!this.statusBar) return;
-		this.statusBar.setText(statusLabel(this.settings, this.phase, this.getResolvedProvider().apiKey));
+		this.statusBar.setText(statusLabel(this.settings, this.phase, this.activeApiKey));
 	}
 
 	private forEachEditor(visit: (view: EditorView) => void): void {
@@ -119,9 +182,11 @@ function statusLabel(settings: GhostCompleteSettings, phase: StatusPhase, apiKey
 	return 'Ghost on';
 }
 
-function readPluginSecret(plugin: GhostCompletePlugin, id: string): string | null {
+async function readSecretValue(storage: { getSecret?: (id: string) => unknown } | null | undefined, id: string): Promise<string | null> {
+	if (!id || !storage || typeof storage.getSecret !== 'function') return null;
 	try {
-		return plugin.app.secretStorage.getSecret(id);
+		const value: unknown = await storage.getSecret(id);
+		return typeof value === 'string' ? value : null;
 	} catch {
 		return null;
 	}

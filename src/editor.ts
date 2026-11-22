@@ -18,12 +18,13 @@ export type StatusPhase = 'on' | 'off' | 'loading' | 'error' | 'no-key';
 
 export interface GhostHost {
 	getSettings(): GhostCompleteSettings;
-	getResolvedProvider(): ResolvedProvider;
+	getResolvedProvider(): Promise<ResolvedProvider>;
 	getEpoch(): number;
 	readonly cache: CompletionCache;
 	readonly client: CompletionClient;
 	setPhase(phase: StatusPhase): void;
 	reportError(error: unknown): void;
+	reportMissingKey(): void;
 }
 
 interface GhostSuggestion {
@@ -196,16 +197,20 @@ class GhostController {
 		const selection = this.view.state.selection;
 		if (selection.ranges.length !== 1 || !selection.main.empty) return;
 
-		const resolved = this.host.getResolvedProvider();
-		if (!resolved.apiKey) {
-			this.host.setPhase('no-key');
-			return;
-		}
-
-		this.showIdlePhase();
-		const delay = clamp(settings.debounceMs, 50, 5000);
-		this.debouncer.schedule(delay, () => {
-			void this.run();
+		const token = this.token;
+		void this.host.getResolvedProvider().then((resolved) => {
+			if (this.destroyed || token !== this.token) return;
+			if (!resolved.apiKey) {
+				this.host.reportMissingKey();
+				return;
+			}
+			this.host.setPhase('on');
+			const delay = clamp(settings.debounceMs, 50, 5000);
+			this.debouncer.schedule(delay, () => {
+				void this.run();
+			});
+		}).catch(() => {
+			if (!this.destroyed && token === this.token) this.host.setPhase('no-key');
 		});
 	}
 
@@ -234,9 +239,9 @@ class GhostController {
 			return;
 		}
 
-		const resolved = this.host.getResolvedProvider();
+		const resolved = await this.host.getResolvedProvider();
 		if (!resolved.apiKey) {
-			this.host.setPhase('no-key');
+			this.host.reportMissingKey();
 			return;
 		}
 
@@ -284,7 +289,11 @@ class GhostController {
 			this.host.setPhase('off');
 			return;
 		}
-		this.host.setPhase(this.host.getResolvedProvider().apiKey ? 'on' : 'no-key');
+		void this.host.getResolvedProvider().then((resolved) => {
+			if (!this.destroyed) this.host.setPhase(resolved.apiKey ? 'on' : 'no-key');
+		}).catch(() => {
+			if (!this.destroyed) this.host.setPhase('no-key');
+		});
 	}
 }
 

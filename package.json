@@ -1,6 +1,6 @@
 {
 	"name": "ghost-complete",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Inline AI ghost-text autocomplete for Obsidian.",
 	"main": "main.js",
 	"type": "module",
