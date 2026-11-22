@@ -12,6 +12,7 @@ const QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 const MAX_SUGGESTION_CHARS = 2000;
+const MIN_REPLAY_CHARS = 40;
 
 /**
  * Turn a chat completion into insertion text: drop fences, labels, echoed prefix, and channel tags.
@@ -29,7 +30,12 @@ export function postprocessCompletion(raw: string, prefix: string): string {
 	text = stripEchoedPrefix(text, prefix);
 	const lineEnd = text.search(/[\n\u2028\u2029]/);
 	const firstLine = lineEnd < 0 ? text : text.slice(0, lineEnd);
-	return firstLine.trim() ? firstLine.slice(0, MAX_SUGGESTION_CHARS) : '';
+	const suggestion = firstLine.slice(0, MAX_SUGGESTION_CHARS);
+	const candidate = suggestion.trim().replace(/\s+/g, ' ');
+	if (!candidate) return '';
+	// A token limit can cut a replay off before it reaches the cursor.
+	if (candidate.length >= MIN_REPLAY_CHARS && prefix.replace(/\s+/g, ' ').includes(candidate)) return '';
+	return suggestion;
 }
 
 export function stripEchoedPrefix(completion: string, prefix: string): string {
