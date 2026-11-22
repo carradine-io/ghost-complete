@@ -84,7 +84,7 @@ Debounce, max tokens, and the two context sizes are in the settings tab.
 
 ## Development
 
-Requires Node.js 20 or newer.
+Use Node.js 22.13 or later in the 22.x line, or Node.js 24 LTS, for development.
 
 ```bash
 npm install

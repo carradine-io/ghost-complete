@@ -31,6 +31,7 @@ export default defineConfig(
 	},
 	...obsidianmd.configs.recommended,
 	{
+		files: ['**/*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}'],
 		rules: {
 			'import/no-extraneous-dependencies': ['warn', {
 				devDependencies: true,
