@@ -27,12 +27,17 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 		return [
 			{
 				name: 'Keys stay with their provider',
-				desc: 'OpenRouter and Groq each have their own base URL and their own API key. Choosing a provider switches the URL and fills in that provider\'s suggested model. A Groq key is never sent to OpenRouter, and an OpenRouter key is never sent to Groq.',
+				desc: 'OpenRouter and Groq each have their own base URL and their own API key. Choosing a provider switches the URL and fills in that provider\'s suggested model. Choose a different secret for each destination. Recognizable keys linked to the wrong provider are blocked locally.',
 			},
 			{
 				name: 'Enable autocomplete',
-				desc: 'While this is off, Tab and Right Arrow keep their normal editor behavior.',
+				desc: `When enabled, suggestions send up to ${this.plugin.settings.prefixChars} characters before the cursor and ${this.plugin.settings.suffixChars} after it to ${provider.label}. OpenRouter can forward this text to a model host.`,
 				control: { type: 'toggle', key: 'enabled' },
+			},
+			{
+				name: 'Excluded folders',
+				desc: 'One vault-relative folder per line. Notes in these folders and their subfolders never request suggestions.',
+				control: { type: 'textarea', key: 'excludedFolders', rows: 3 },
 			},
 			{
 				name: 'Provider',
@@ -96,6 +101,7 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 	override getControlValue(key: string): unknown {
 		const settings = this.plugin.settings;
 		switch (key) {
+			case 'excludedFolders': return settings.excludedFolders;
 			case 'enabled':
 				return settings.enabled;
 			case 'provider':
@@ -146,14 +152,22 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 			case 'model':
 				if (typeof value === 'string') settings.model = value;
 				break;
+			case 'excludedFolders':
+				if (typeof value === 'string') settings.excludedFolders = value;
+				break;
 			case 'openrouterSecretId':
-				if (typeof value === 'string') settings.secretIds.openrouter = value;
-				else if (value === null) settings.secretIds.openrouter = '';
+			case 'groqSecretId': {
+				const id = key === 'groqSecretId' ? 'groq' : 'openrouter';
+				const other = id === 'groq' ? 'openrouter' : 'groq';
+				const secretId = typeof value === 'string' ? value.trim() : '';
+				if (secretId && settings.secretIds[other].trim() === secretId) {
+					new Notice('Choose a different secret for each provider.');
+					this.update();
+					return;
+				}
+				settings.secretIds[id] = secretId;
 				break;
-			case 'groqSecretId':
-				if (typeof value === 'string') settings.secretIds.groq = value;
-				else if (value === null) settings.secretIds.groq = '';
-				break;
+			}
 			case 'minTypedChars':
 			case 'debounceMs':
 			case 'maxTokens':
