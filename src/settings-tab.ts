@@ -162,7 +162,7 @@ function secretKey(name: string, providerId: ProviderId): SettingDefinitionItem 
 	const provider = PROVIDERS[providerId];
 	return {
 		name,
-		desc: `Stored only in this plugin's data and sent only to ${provider.baseUrl}.`,
+		desc: `Link a secret from Obsidian's secret storage. Its value is sent only to ${provider.baseUrl}.`,
 		control: {
 			type: 'secret',
 			key: providerId === 'openrouter' ? 'openrouterApiKey' : 'groqApiKey',

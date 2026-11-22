@@ -5,7 +5,9 @@ import {
 	ChatCompletionClient,
 	CompletionSession,
 	buildChatRequest,
+	buildRequestForSettings,
 	cacheKey,
+	friendlyHttpError,
 	readCompletionContent,
 	redactSecrets,
 	type CompletionClient,
@@ -103,6 +105,55 @@ describe('provider routing', () => {
 		expect(payload.max_tokens).toBeUndefined();
 		expect(payload.reasoning_effort).toBe('low');
 		expect(payload.reasoning_format).toBe('hidden');
+	});
+
+	it('sends Authorization Bearer for the active provider secret, not the secret id', () => {
+		const settings = normalizeSettings({
+			provider: 'openrouter',
+			apiKeys: { openrouter: 'ghost-openrouter', groq: 'ghost-groq' },
+			model: 'google/gemini-2.5-flash-lite',
+		});
+		const secrets: Record<string, string> = {
+			'ghost-openrouter': 'Bearer "sk-or-v1-active-key"\n',
+			'ghost-groq': 'gsk_other-provider-key',
+		};
+		const readSecret = (id: string) => secrets[id] ?? null;
+		const request = buildRequestForSettings(settings, readSecret, {
+			prefix: 'Hello',
+			suffix: '',
+			maxTokens: 64,
+		});
+		expect(request).not.toBeNull();
+		expect(request?.headers.Authorization).toBe('Bearer sk-or-v1-active-key');
+		expect(request?.url).toBe('https://openrouter.ai/api/v1/chat/completions');
+		expect(request?.headers.Authorization).not.toContain('ghost-openrouter');
+		expect(request?.body).not.toContain('gsk_other-provider-key');
+		expect(request?.body).not.toContain('ghost-groq');
+		expect(request?.url).not.toContain('sk-or-v1-active-key');
+
+		selectProvider(settings, 'groq');
+		const groq = buildRequestForSettings(settings, readSecret, {
+			prefix: 'Hello',
+			suffix: '',
+			maxTokens: 32,
+		});
+		expect(groq?.headers.Authorization).toBe('Bearer gsk_other-provider-key');
+		expect(groq?.url).toBe('https://api.groq.com/openai/v1/chat/completions');
+		expect(groq?.body).not.toContain('sk-or-v1-active-key');
+	});
+
+	it('does not send a request when the linked secret has no value', () => {
+		const settings = normalizeSettings({
+			provider: 'openrouter',
+			apiKeys: { openrouter: 'ghost-openrouter', groq: '' },
+		});
+		expect(buildRequestForSettings(settings, () => null, {
+			prefix: 'Hello',
+			suffix: '',
+			maxTokens: 64,
+		})).toBeNull();
+		expect(friendlyHttpError(401, 'Missing Authentication header', 'OpenRouter', false))
+			.toBe('No API key is set for OpenRouter.');
 	});
 
 	it('omits Groq reasoning fields for models that are not gpt-oss', () => {
@@ -233,12 +284,15 @@ describe('CompletionSession', () => {
 			},
 		};
 		const session = new CompletionSession(new ChatCompletionClient(http), new CompletionCache());
-		await expect(session.request(input())).rejects.toThrow(/\[redacted\]/);
+		await expect(session.request(input())).rejects.toThrow(
+			'OpenRouter rejected the API key. Check the key linked for this provider.',
+		);
 		try {
 			await session.request(input());
 		} catch (error) {
 			const message = error instanceof Error ? error.message : '';
 			expect(message).not.toContain('openrouter-test-key');
+			expect(message).not.toContain('Missing Authentication header');
 		}
 	});
 });

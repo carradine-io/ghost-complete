@@ -12,12 +12,13 @@ import { CompletionCache } from './cache';
 import { CompletionSession, type CompletionClient } from './completion';
 import { snapContext } from './context';
 import { Debouncer } from './debounce';
-import { resolveProvider, type GhostCompleteSettings } from './settings';
+import { type GhostCompleteSettings, type ResolvedProvider } from './settings';
 
 export type StatusPhase = 'on' | 'off' | 'loading' | 'error' | 'no-key';
 
 export interface GhostHost {
 	getSettings(): GhostCompleteSettings;
+	getResolvedProvider(): ResolvedProvider;
 	getEpoch(): number;
 	readonly cache: CompletionCache;
 	readonly client: CompletionClient;
@@ -195,7 +196,7 @@ class GhostController {
 		const selection = this.view.state.selection;
 		if (selection.ranges.length !== 1 || !selection.main.empty) return;
 
-		const resolved = resolveProvider(settings);
+		const resolved = this.host.getResolvedProvider();
 		if (!resolved.apiKey) {
 			this.host.setPhase('no-key');
 			return;
@@ -233,7 +234,7 @@ class GhostController {
 			return;
 		}
 
-		const resolved = resolveProvider(settings);
+		const resolved = this.host.getResolvedProvider();
 		if (!resolved.apiKey) {
 			this.host.setPhase('no-key');
 			return;
@@ -283,7 +284,7 @@ class GhostController {
 			this.host.setPhase('off');
 			return;
 		}
-		this.host.setPhase(resolveProvider(settings).apiKey ? 'on' : 'no-key');
+		this.host.setPhase(this.host.getResolvedProvider().apiKey ? 'on' : 'no-key');
 	}
 }
 

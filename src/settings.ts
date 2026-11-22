@@ -92,6 +92,45 @@ export function storedSecrets(settings: GhostCompleteSettings): string[] {
 	return [settings.apiKeys.openrouter, settings.apiKeys.groq];
 }
 
+/**
+ * The secret setting stores an id, not the key. Read the key from Obsidian secret storage.
+ * A missing secret stays empty so the id is never sent as a bearer token.
+ */
+export function materializeApiKey(
+	storedReference: string,
+	readSecret: (id: string) => string | null,
+): string {
+	const reference = storedReference.trim();
+	if (!reference) return '';
+	let secret: string | null;
+	try {
+		secret = readSecret(reference);
+	} catch {
+		return '';
+	}
+	if (typeof secret !== 'string') return '';
+	return normalizeCredential(secret);
+}
+
+/** Make a credential safe to put in an Authorization header. */
+export function normalizeCredential(value: string): string {
+	let credential = value.split('\u0000').join('').replace(/[\r\n]/g, '').trim();
+	credential = stripWrappingQuotes(credential);
+	credential = credential.replace(/^Bearer\s+/i, '').trim();
+	return stripWrappingQuotes(credential);
+}
+
+function stripWrappingQuotes(value: string): string {
+	if (
+		value.length > 1
+		&& ((value.startsWith('"') && value.endsWith('"'))
+			|| (value.startsWith("'") && value.endsWith("'")))
+	) {
+		return value.slice(1, -1).trim();
+	}
+	return value;
+}
+
 function asString(value: unknown): string {
 	return typeof value === 'string' ? value : '';
 }

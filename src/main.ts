@@ -4,7 +4,7 @@ import { CompletionCache } from './cache';
 import { ChatCompletionClient, sanitizeError, type CompletionClient } from './completion';
 import { createGhostExtension, notifyGhostSettings, type GhostHost, type StatusPhase } from './editor';
 import { createObsidianHttp } from './http';
-import { normalizeSettings, resolveProvider, storedSecrets, type GhostCompleteSettings } from './settings';
+import { materializeApiKey, normalizeSettings, resolveProvider, storedSecrets, type GhostCompleteSettings, type ResolvedProvider } from './settings';
 import { GhostCompleteSettingTab } from './settings-tab';
 
 export default class GhostCompletePlugin extends Plugin implements GhostHost {
@@ -48,6 +48,14 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 		return this.settings;
 	}
 
+	getResolvedProvider(): ResolvedProvider {
+		const resolved = resolveProvider(this.settings);
+		return {
+			...resolved,
+			apiKey: materializeApiKey(resolved.apiKey, (id) => readPluginSecret(this, id)),
+		};
+	}
+
 	getEpoch(): number {
 		return this.epoch;
 	}
@@ -78,7 +86,8 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	}
 
 	reportError(error: unknown): void {
-		const message = sanitizeError(error, storedSecrets(this.settings));
+		const secrets = [...storedSecrets(this.settings), this.getResolvedProvider().apiKey];
+		const message = sanitizeError(error, secrets);
 		this.setPhase('error');
 		const now = Date.now();
 		if (message === this.lastError && now - this.lastErrorAt < 8000) return;
@@ -89,7 +98,7 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 
 	refreshStatus(): void {
 		if (!this.statusBar) return;
-		this.statusBar.setText(statusLabel(this.settings, this.phase));
+		this.statusBar.setText(statusLabel(this.settings, this.phase, this.getResolvedProvider().apiKey));
 	}
 
 	private forEachEditor(visit: (view: EditorView) => void): void {
@@ -102,12 +111,20 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	}
 }
 
-function statusLabel(settings: GhostCompleteSettings, phase: StatusPhase): string {
+function statusLabel(settings: GhostCompleteSettings, phase: StatusPhase, apiKey: string): string {
 	if (!settings.enabled) return 'Ghost off';
-	if (!resolveProvider(settings).apiKey) return 'Ghost: no key';
+	if (!apiKey) return 'Ghost: no key';
 	if (phase === 'loading') return 'Ghost…';
 	if (phase === 'error') return 'Ghost: error';
 	return 'Ghost on';
+}
+
+function readPluginSecret(plugin: GhostCompletePlugin, id: string): string | null {
+	try {
+		return plugin.app.secretStorage.getSecret(id);
+	} catch {
+		return null;
+	}
 }
 
 function editorViewOf(view: MarkdownView): EditorView | null {
