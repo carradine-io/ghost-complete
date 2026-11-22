@@ -35,7 +35,7 @@ export interface ChatHttpRequest {
 export function buildPrompt(prefix: string, suffix: string): string {
 	return [
 		'Continue this Markdown note at the cursor.',
-		'Reply with only the text that should be inserted.',
+		'Suggest one short phrase or sentence on the current line. Return only the insertion.',
 		'Do not repeat text that already appears before the cursor.',
 		'Do not wrap the reply in quotes or code fences.',
 		'Do not add a label, preamble, or explanation.',

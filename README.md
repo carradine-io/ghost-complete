@@ -7,7 +7,7 @@ It is not affiliated with or endorsed by Dynalist Inc. Obsidian is a trademark o
 ## Features
 
 - After a short pause (400ms by default), a grey suggestion appears at the cursor in the Markdown editor.
-- **Tab** inserts the whole suggestion. **Right Arrow** inserts the next word. **Escape** dismisses it.
+- **Tab** inserts the suggested continuation of the current line. Additional lines from the provider are discarded. **Right Arrow** inserts the next word. **Escape** dismisses it.
 - Tab and Right Arrow keep their normal editor behavior when no suggestion is showing.
 - Typing or moving the cursor dismisses the current suggestion and, after another pause, requests a new one.
 - Providers: **OpenRouter** (default) and **Groq**. Each provider has its own base URL and its own API key. A Groq key is never sent to OpenRouter, and an OpenRouter key is never sent to Groq.

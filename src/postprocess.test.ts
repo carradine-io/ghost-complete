@@ -47,8 +47,14 @@ describe('postprocessCompletion', () => {
 		expect(postprocessCompletion('Continuation:', '')).toBe('');
 	});
 
-	it('normalizes CRLF and caps runaway length', () => {
-		expect(postprocessCompletion('hello\r\nworld', '')).toBe('hello\nworld');
+	it('keeps the first line and discards follow-up bullets', () => {
+		const line = ' This is useful for saving time and reducing typos.';
+		expect(postprocessCompletion(line + '\n\n- First benefit\n- Second benefit', '')).toBe(line);
+		expect(postprocessCompletion('\n- New item', '')).toBe('');
+	});
+
+	it('handles CRLF and caps runaway length', () => {
+		expect(postprocessCompletion('hello\r\nworld', '')).toBe('hello');
 		const long = 'x'.repeat(2500);
 		expect(postprocessCompletion(long, '').length).toBe(2000);
 	});

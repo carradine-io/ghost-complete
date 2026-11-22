@@ -18,7 +18,7 @@ const MAX_SUGGESTION_CHARS = 2000;
  * Leading spaces are preserved when they are part of the continuation.
  */
 export function postprocessCompletion(raw: string, prefix: string): string {
-	let text = raw.replace(/\r\n/g, '\n');
+	let text = raw.replace(/\r\n?/g, '\n');
 	text = stripHarmony(text);
 	text = text.replace(THINK_BLOCK, '');
 	text = stripOuterFence(text);
@@ -27,8 +27,9 @@ export function postprocessCompletion(raw: string, prefix: string): string {
 	text = stripWrappingQuotes(text);
 	text = stripPreamble(text);
 	text = stripEchoedPrefix(text, prefix);
-	if (text.length > MAX_SUGGESTION_CHARS) text = text.slice(0, MAX_SUGGESTION_CHARS);
-	return text;
+	const lineEnd = text.search(/[\n\u2028\u2029]/);
+	const firstLine = lineEnd < 0 ? text : text.slice(0, lineEnd);
+	return firstLine.trim() ? firstLine.slice(0, MAX_SUGGESTION_CHARS) : '';
 }
 
 export function stripEchoedPrefix(completion: string, prefix: string): string {
