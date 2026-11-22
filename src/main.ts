@@ -1,5 +1,5 @@
 import { EditorView } from '@codemirror/view';
-import { MarkdownView, Notice, Plugin } from 'obsidian';
+import { MarkdownView, Notice, Plugin, requestUrl } from 'obsidian';
 import { CompletionCache } from './cache';
 import {
 	ChatCompletionClient,
@@ -26,10 +26,10 @@ import { GhostCompleteSettingTab } from './settings-tab';
 export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	settings: GhostCompleteSettings = normalizeSettings(undefined);
 	readonly cache = new CompletionCache();
-	private readonly http = createObsidianHttp();
+	private readonly http = createObsidianHttp(requestUrl);
 	readonly client: CompletionClient = new ChatCompletionClient(this.http);
 	lastConnectionReport = '';
-	private activeApiKey = '';
+	private hasKey = false;
 
 	private statusBar: HTMLElement | null = null;
 	private settingsTab: GhostCompleteSettingTab | null = null;
@@ -71,8 +71,8 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	async getResolvedProvider(): Promise<ResolvedProvider> {
 		const resolved = resolveProvider(this.settings);
 		const secretValue = await readSecretValue(this.app.secretStorage, resolved.secretId);
-		const apiKey = credentialFromSecret(resolved.secretId, secretValue);
-		this.activeApiKey = apiKey;
+		const apiKey = credentialFromSecret(resolved.id, resolved.secretId, secretValue);
+		this.hasKey = Boolean(apiKey);
 		return { ...resolved, apiKey };
 	}
 
@@ -87,6 +87,9 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	}
 
 	async saveSettings(): Promise<void> {
+		this.epoch += 1;
+		this.cache.clear();
+		this.forEachEditor((view) => notifyGhostSettings(view));
 		await this.saveData(this.settings);
 		await this.getResolvedProvider();
 		this.refreshStatus();
@@ -95,10 +98,8 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	async setEnabled(enabled: boolean): Promise<void> {
 		if (this.settings.enabled === enabled) return;
 		this.settings.enabled = enabled;
-		this.epoch += 1;
 		this.phase = enabled ? 'on' : 'off';
 		await this.saveSettings();
-		this.forEachEditor((view) => notifyGhostSettings(view));
 		const tab = this.settingsTab;
 		if (tab && !tab.applyingFromControl && tab.containerEl.isConnected) tab.update();
 	}
@@ -111,6 +112,9 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	async testConnection(): Promise<string> {
 		const resolved = await this.getResolvedProvider();
 		const providerLabel = PROVIDERS[resolved.id].label;
+		if (!resolved.apiKey && this.settings.secretIds[resolved.id].trim()) {
+			return `${providerLabel}: no usable key. Link a distinct secret containing this provider's key. No request was sent.`;
+		}
 		if (!resolved.apiKey) {
 			return formatConnectionReport({
 				providerLabel,
@@ -138,8 +142,8 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 
 	reportMissingKey(): void {
 		const providerLabel = PROVIDERS[this.settings.provider].label;
-		const message = `No API key set for ${providerLabel}.`;
-		this.activeApiKey = '';
+		const message = `Check the linked API key for ${providerLabel}.`;
+		this.hasKey = false;
 		this.setPhase('no-key');
 		const now = Date.now();
 		if (message === this.lastError && now - this.lastErrorAt < 8000) return;
@@ -149,7 +153,7 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	}
 
 	reportError(error: unknown): void {
-		const secrets = [...storedSecrets(this.settings), this.activeApiKey];
+		const secrets = storedSecrets(this.settings);
 		const message = sanitizeError(error, secrets);
 		this.setPhase('error');
 		const now = Date.now();
@@ -161,7 +165,7 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 
 	refreshStatus(): void {
 		if (!this.statusBar) return;
-		this.statusBar.setText(statusLabel(this.settings, this.phase, this.activeApiKey));
+		this.statusBar.setText(statusLabel(this.settings, this.phase, this.hasKey));
 	}
 
 	private forEachEditor(visit: (view: EditorView) => void): void {
@@ -174,9 +178,9 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	}
 }
 
-function statusLabel(settings: GhostCompleteSettings, phase: StatusPhase, apiKey: string): string {
+function statusLabel(settings: GhostCompleteSettings, phase: StatusPhase, hasKey: boolean): string {
 	if (!settings.enabled) return 'Ghost off';
-	if (!apiKey) return 'Ghost: no key';
+	if (!hasKey) return 'Ghost: no key';
 	if (phase === 'loading') return 'Ghost…';
 	if (phase === 'error') return 'Ghost: error';
 	return 'Ghost on';

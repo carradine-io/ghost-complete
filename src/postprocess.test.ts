@@ -37,6 +37,19 @@ describe('postprocessCompletion', () => {
 		expect(stripEchoedPrefix('abcdefghijkl tail', 'KEEP abcdefghijkl')).toBe(' tail');
 	});
 
+	it('suppresses a partial replay from earlier in the paragraph, even if cut off mid-word', () => {
+		const opening = 'This note describes a small writing tool. It helps the writer finish a thought.';
+		const prefix = opening + ' A pause gives it time to suggest a continuation.';
+		expect(postprocessCompletion('  ' + opening.slice(0, -5), prefix)).toBe('');
+	});
+
+	it('keeps a new sentence with a familiar opening and permits short repeated phrases', () => {
+		const prefix = 'The writing tool helps us finish sentences. What happens next?';
+		expect(postprocessCompletion(' The writing tool also respects the cursor.', prefix))
+			.toBe(' The writing tool also respects the cursor.');
+		expect(postprocessCompletion(' writing tool', prefix)).toBe(' writing tool');
+	});
+
 	it('drops think blocks and harmony analysis, keeping the final channel', () => {
 		expect(postprocessCompletion('<think>secret</think> world', '')).toBe(' world');
 		const harmony = '<|channel|>analysis<|message|>The user wants a continuation.<|end|><|start|>assistant<|channel|>final<|message|> and the rain fell<|return|>';
@@ -47,8 +60,14 @@ describe('postprocessCompletion', () => {
 		expect(postprocessCompletion('Continuation:', '')).toBe('');
 	});
 
-	it('normalizes CRLF and caps runaway length', () => {
-		expect(postprocessCompletion('hello\r\nworld', '')).toBe('hello\nworld');
+	it('keeps the first line and discards follow-up bullets', () => {
+		const line = ' This is useful for saving time and reducing typos.';
+		expect(postprocessCompletion(line + '\n\n- First benefit\n- Second benefit', '')).toBe(line);
+		expect(postprocessCompletion('\n- New item', '')).toBe('');
+	});
+
+	it('handles CRLF and caps runaway length', () => {
+		expect(postprocessCompletion('hello\r\nworld', '')).toBe('hello');
 		const long = 'x'.repeat(2500);
 		expect(postprocessCompletion(long, '').length).toBe(2000);
 	});

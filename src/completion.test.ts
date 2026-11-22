@@ -37,6 +37,20 @@ function input(overrides: Partial<CompletionInput> = {}): CompletionInput {
 	};
 }
 
+describe('completion prompt', () => {
+	it.each([
+		['We tested version 3.5 with Dr.', ' before lunch.'],
+		['Did the test pass?', ''],
+	])('provides context and sentence guidance for "%s"', (prefix, suffix) => {
+		const request = buildChatRequest(input({ prefix, suffix }));
+		const payload = JSON.parse(request.body) as { messages: { content: string }[] };
+		const prompt = payload.messages[0]?.content;
+		expect(prompt).toContain('Finish an unfinished sentence naturally, taking into account any text after the cursor.');
+		expect(prompt).toContain('After a complete sentence, suggest one sentence that develops the thought using details already in the note.');
+		expect(prompt).toContain(`Text before the cursor:\n${prefix}\n\nText after the cursor:\n${suffix}\n`);
+	});
+});
+
 describe('provider routing', () => {
 	it('uses the default fast models and a 400ms debounce', () => {
 		expect(DEFAULT_SETTINGS.debounceMs).toBe(400);
@@ -318,24 +332,25 @@ describe('CompletionSession', () => {
 		expect(calls).toBe(2);
 	});
 
-	it('redacts the API key from a failed HTTP response', async () => {
+	it('keeps upstream error text and credentials out of autocomplete notices', async () => {
 		const http: HttpPost = {
 			async post() {
 				return {
 					status: 401,
-					body: JSON.stringify({ error: { message: 'rejected openrouter-test-key' } }),
+					body: JSON.stringify({ error: { message: 'private note text and openrouter-test-key' } }),
 				};
 			},
 		};
 		const session = new CompletionSession(new ChatCompletionClient(http), new CompletionCache());
 		await expect(session.request(input())).rejects.toThrow(
-			'OpenRouter rejected the API key (HTTP 401): rejected [redacted]',
+			'OpenRouter rejected the API key (HTTP 401).',
 		);
 		try {
 			await session.request(input());
 		} catch (error) {
 			const message = error instanceof Error ? error.message : '';
 			expect(message).not.toContain('openrouter-test-key');
+			expect(message).not.toContain('private note text');
 		}
 	});
 

@@ -35,7 +35,12 @@ export interface ChatHttpRequest {
 export function buildPrompt(prefix: string, suffix: string): string {
 	return [
 		'Continue this Markdown note at the cursor.',
-		'Reply with only the text that should be inserted.',
+		'Use the text on both sides of the cursor to decide whether the sentence is complete.',
+		'Finish an unfinished sentence naturally, taking into account any text after the cursor.',
+		'After a complete sentence, suggest one sentence that develops the thought using details already in the note.',
+		'Match the writer’s voice, perspective, and sentence rhythm. Let the idea determine the length.',
+		'Avoid generic facts, repetitive openings, and invented personal details.',
+		'Return only the insertion on the current line.',
 		'Do not repeat text that already appears before the cursor.',
 		'Do not wrap the reply in quotes or code fences.',
 		'Do not add a label, preamble, or explanation.',
@@ -104,7 +109,7 @@ export function buildRequestForSettings(
 ): ChatHttpRequest | null {
 	const resolved = resolveProvider(settings);
 	const secretValue = resolved.secretId ? readSecret(resolved.secretId) : null;
-	const apiKey = credentialFromSecret(resolved.secretId, secretValue);
+	const apiKey = credentialFromSecret(resolved.id, resolved.secretId, secretValue);
 	if (!apiKey) return null;
 	return buildChatRequest({
 		providerId: resolved.id,
@@ -232,13 +237,19 @@ export class ChatCompletionClient implements CompletionClient {
 	async complete(input: CompletionInput, signal: AbortSignal): Promise<string> {
 		if (signal.aborted) throw new AbortError();
 		const request = buildChatRequest(input);
-		const response = await this.http.post(request.url, request.headers, request.body, signal);
+		let response: HttpResponse;
+		try {
+			response = await this.http.post(request.url, request.headers, request.body, signal);
+		} catch (error) {
+			if (isAbortError(error)) throw error;
+			throw new Error('The provider could not be reached.');
+		}
 		if (signal.aborted) throw new AbortError();
 		if (response.status < 200 || response.status >= 300) {
-			const detail = redactSecrets(readErrorMessage(response.body), [input.apiKey]);
+			// Provider error bodies can quote the note. Only the synthetic connection test displays them.
 			throw new Error(friendlyHttpError(
 				response.status,
-				detail,
+				'',
 				PROVIDERS[input.providerId].label,
 				input.apiKey.trim().length > 0,
 			));
