@@ -2,6 +2,7 @@ import { AbortError, isAbortError } from './abort';
 import { CompletionCache } from './cache';
 import { postprocessCompletion } from './postprocess';
 import { PROVIDERS, type ProviderId } from './providers';
+import { materializeApiKey, resolveProvider, type GhostCompleteSettings } from './settings';
 
 export interface CompletionInput {
 	providerId: ProviderId;
@@ -86,6 +87,46 @@ export function buildChatRequest(input: CompletionInput): ChatHttpRequest {
 	};
 }
 
+export interface RequestContext {
+	prefix: string;
+	suffix: string;
+	maxTokens: number;
+}
+
+/**
+ * Resolve the active provider's secret to its key, then build the chat request.
+ * Returns null when that provider has no key, so the secret id is never sent.
+ */
+export function buildRequestForSettings(
+	settings: GhostCompleteSettings,
+	readSecret: (id: string) => string | null,
+	context: RequestContext,
+): ChatHttpRequest | null {
+	const resolved = resolveProvider(settings);
+	const apiKey = materializeApiKey(resolved.apiKey, readSecret);
+	if (!apiKey) return null;
+	return buildChatRequest({
+		providerId: resolved.id,
+		apiKey,
+		model: resolved.model,
+		prefix: context.prefix,
+		suffix: context.suffix,
+		maxTokens: context.maxTokens,
+	});
+}
+
+export function friendlyHttpError(
+	status: number,
+	detail: string,
+	providerLabel: string,
+	hasApiKey: boolean,
+): string {
+	if (status === 401 && !hasApiKey) return `No API key is set for ${providerLabel}.`;
+	if (status === 401) return `${providerLabel} rejected the API key. Check the key linked for this provider.`;
+	const cleaned = detail.trim();
+	return cleaned ? `Request failed (${status}): ${cleaned}` : `Request failed (${status}).`;
+}
+
 export function cacheKey(input: Pick<CompletionInput, 'providerId' | 'model' | 'prefix' | 'suffix' | 'maxTokens'>): string {
 	return [input.providerId, input.model, String(input.maxTokens), input.prefix, input.suffix].join('\u0000');
 }
@@ -153,7 +194,12 @@ export class ChatCompletionClient implements CompletionClient {
 		if (signal.aborted) throw new AbortError();
 		if (response.status < 200 || response.status >= 300) {
 			const detail = redactSecrets(readErrorMessage(response.body), [input.apiKey]);
-			throw new Error(`Request failed (${response.status}): ${detail}`);
+			throw new Error(friendlyHttpError(
+				response.status,
+				detail,
+				PROVIDERS[input.providerId].label,
+				input.apiKey.trim().length > 0,
+			));
 		}
 		try {
 			return readCompletionContent(response.body);
