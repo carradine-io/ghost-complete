@@ -37,6 +37,20 @@ function input(overrides: Partial<CompletionInput> = {}): CompletionInput {
 	};
 }
 
+describe('completion prompt', () => {
+	it.each([
+		['We tested version 3.5 with Dr.', ' before lunch.'],
+		['Did the test pass?', ''],
+	])('provides context and sentence guidance for "%s"', (prefix, suffix) => {
+		const request = buildChatRequest(input({ prefix, suffix }));
+		const payload = JSON.parse(request.body) as { messages: { content: string }[] };
+		const prompt = payload.messages[0]?.content;
+		expect(prompt).toContain('If the thought is unfinished, suggest only enough words to finish it.');
+		expect(prompt).toContain('If the sentence is complete, suggest one short follow-up sentence.');
+		expect(prompt).toContain(`Text before the cursor:\n${prefix}\n\nText after the cursor:\n${suffix}\n`);
+	});
+});
+
 describe('provider routing', () => {
 	it('uses the default fast models and a 400ms debounce', () => {
 		expect(DEFAULT_SETTINGS.debounceMs).toBe(400);
