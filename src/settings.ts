@@ -7,6 +7,8 @@ export interface GhostCompleteSettings {
 	secretIds: Record<ProviderId, string>;
 	/** Editable model id. Selecting a provider replaces this with that provider's suggested default. */
 	model: string;
+	excludedFolders: string;
+	minTypedChars: number;
 	debounceMs: number;
 	maxTokens: number;
 	prefixChars: number;
@@ -33,6 +35,8 @@ export const DEFAULT_SETTINGS: GhostCompleteSettings = {
 		groq: '',
 	},
 	model: PROVIDERS.openrouter.defaultModel,
+	excludedFolders: '',
+	minTypedChars: 3,
 	debounceMs: 400,
 	maxTokens: 64,
 	prefixChars: 2000,
@@ -69,6 +73,8 @@ export function normalizeSettings(data: unknown): GhostCompleteSettings {
 			groq: groqSecretId,
 		},
 		model,
+		excludedFolders: asString(raw.excludedFolders),
+		minTypedChars: parseBoundedInt(raw.minTypedChars, DEFAULT_SETTINGS.minTypedChars, 0, 100),
 		debounceMs: parseBoundedInt(raw.debounceMs, DEFAULT_SETTINGS.debounceMs, 50, 5000),
 		maxTokens: parseBoundedInt(raw.maxTokens, DEFAULT_SETTINGS.maxTokens, 8, 512),
 		prefixChars: parseBoundedInt(raw.prefixChars, DEFAULT_SETTINGS.prefixChars, 100, 20000),
@@ -95,7 +101,8 @@ export function resolveProvider(settings: GhostCompleteSettings): ResolvedProvid
 		id: provider.id,
 		baseUrl: provider.baseUrl,
 		model: settings.model.trim() || provider.defaultModel,
-		secretId: settings.secretIds[provider.id].trim(),
+		secretId: settings.secretIds.openrouter.trim() === settings.secretIds.groq.trim()
+			? '' : settings.secretIds[provider.id].trim(),
 		apiKey: '',
 	};
 }
@@ -103,10 +110,12 @@ export function resolveProvider(settings: GhostCompleteSettings): ResolvedProvid
 /**
  * Return the secret value only. An unresolved id is never used as a token.
  */
-export function credentialFromSecret(secretId: string, secretValue: string | null): string {
+export function credentialFromSecret(provider: ProviderId, secretId: string, secretValue: string | null): string {
 	if (!secretId.trim() || typeof secretValue !== 'string') return '';
 	const credential = normalizeCredential(secretValue);
 	if (!credential || credential === secretId.trim()) return '';
+	if (provider === 'openrouter' && credential.startsWith('gsk_')) return '';
+	if (provider === 'groq' && credential.startsWith('sk-or-')) return '';
 	return credential;
 }
 
@@ -161,4 +170,14 @@ function asString(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function isExcludedNote(path: string | undefined, folders: string): boolean {
+	const normalize = (value: string) => value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').normalize('NFC').toLowerCase();
+	const note = normalize(path ?? '');
+	return folders.split('\n').some((line) => {
+		if (!line.trim()) return false;
+		const folder = normalize(line);
+		return !note || !folder || note.startsWith(folder + '/');
+	});
 }

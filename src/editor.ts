@@ -1,3 +1,4 @@
+import { editorInfoField } from 'obsidian';
 import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import {
 	Decoration,
@@ -11,8 +12,9 @@ import { acceptSuggestion } from './accept';
 import { CompletionCache } from './cache';
 import { CompletionSession, type CompletionClient } from './completion';
 import { snapContext } from './context';
+import { countTypedCharacters } from './typing';
 import { Debouncer } from './debounce';
-import { type GhostCompleteSettings, type ResolvedProvider } from './settings';
+import { isExcludedNote, type GhostCompleteSettings, type ResolvedProvider } from './settings';
 
 export type StatusPhase = 'on' | 'off' | 'loading' | 'error' | 'no-key';
 
@@ -113,7 +115,7 @@ export function dismissGhost(view: EditorView): boolean {
 }
 
 export function notifyGhostSettings(view: EditorView): void {
-	view.dispatch({ userEvent: 'ghost-complete.refresh' });
+	view.dispatch({ effects: ghostEffect.of(null), userEvent: 'ghost-complete.refresh' });
 }
 
 export function createGhostExtension(host: GhostHost): Extension {
@@ -146,6 +148,7 @@ class GhostController {
 	private readonly session: CompletionSession;
 	private readonly debouncer = new Debouncer();
 	private token = 0;
+	private typedCharacters = 0;
 	private seenEpoch: number;
 	private destroyed = false;
 
@@ -161,9 +164,9 @@ class GhostController {
 	handle(update: ViewUpdate): void {
 		if (this.seenEpoch !== this.host.getEpoch()) {
 			this.seenEpoch = this.host.getEpoch();
+			this.typedCharacters = 0;
 			if (!this.host.getSettings().enabled) {
 				this.stop();
-				this.clearGhostSoon();
 				this.host.setPhase('off');
 				return;
 			}
@@ -172,18 +175,28 @@ class GhostController {
 		}
 
 		if (update.focusChanged && !update.view.hasFocus) {
+			this.typedCharacters = 0;
 			this.stop();
 			this.clearGhostSoon();
 			this.showIdlePhase();
 			return;
 		}
 
-		if (update.docChanged || update.selectionSet) this.schedule();
+		if (update.docChanged || update.selectionSet || update.focusChanged) {
+			for (const transaction of update.transactions) {
+				this.typedCharacters = countTypedCharacters(this.typedCharacters, transaction);
+			}
+			this.schedule();
+		}
 	}
 
 	destroy(): void {
 		this.destroyed = true;
 		this.stop();
+	}
+
+	private excluded(): boolean {
+		return isExcludedNote(this.view.state.field(editorInfoField, false)?.file?.path, this.host.getSettings().excludedFolders);
 	}
 
 	private schedule(): void {
@@ -193,7 +206,11 @@ class GhostController {
 			this.host.setPhase('off');
 			return;
 		}
-		if (!this.view.hasFocus) return;
+		if (!this.view.hasFocus || this.excluded()) return;
+		if (this.typedCharacters < settings.minTypedChars) {
+			this.showIdlePhase();
+			return;
+		}
 		const selection = this.view.state.selection;
 		if (selection.ranges.length !== 1 || !selection.main.empty) return;
 
@@ -218,7 +235,7 @@ class GhostController {
 		const token = this.token;
 		const epoch = this.host.getEpoch();
 		const settings = this.host.getSettings();
-		if (!settings.enabled || !this.view.hasFocus) return;
+		if (!settings.enabled || !this.view.hasFocus || this.excluded()) return;
 		const selection = this.view.state.selection;
 		if (selection.ranges.length !== 1 || !selection.main.empty) return;
 
@@ -240,6 +257,7 @@ class GhostController {
 		}
 
 		const resolved = await this.host.getResolvedProvider();
+		if (this.destroyed || token !== this.token || epoch !== this.host.getEpoch() || !this.view.hasFocus || this.excluded()) return;
 		if (!resolved.apiKey) {
 			this.host.reportMissingKey();
 			return;
@@ -256,7 +274,7 @@ class GhostController {
 				maxTokens: clamp(settings.maxTokens, 8, 512),
 			});
 			if (this.destroyed || token !== this.token || epoch !== this.host.getEpoch()) return;
-			if (!this.view.hasFocus) return;
+			if (!this.view.hasFocus || this.excluded()) return;
 			const current = this.view.state.selection.main;
 			if (!current.empty || current.head !== cursor || !text) {
 				this.showIdlePhase();
@@ -284,15 +302,16 @@ class GhostController {
 	}
 
 	private showIdlePhase(): void {
+		const token = this.token;
 		const settings = this.host.getSettings();
 		if (!settings.enabled) {
 			this.host.setPhase('off');
 			return;
 		}
 		void this.host.getResolvedProvider().then((resolved) => {
-			if (!this.destroyed) this.host.setPhase(resolved.apiKey ? 'on' : 'no-key');
+			if (!this.destroyed && token === this.token) this.host.setPhase(resolved.apiKey ? 'on' : 'no-key');
 		}).catch(() => {
-			if (!this.destroyed) this.host.setPhase('no-key');
+			if (!this.destroyed && token === this.token) this.host.setPhase('no-key');
 		});
 	}
 }

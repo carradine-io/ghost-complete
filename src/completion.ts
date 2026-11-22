@@ -109,7 +109,7 @@ export function buildRequestForSettings(
 ): ChatHttpRequest | null {
 	const resolved = resolveProvider(settings);
 	const secretValue = resolved.secretId ? readSecret(resolved.secretId) : null;
-	const apiKey = credentialFromSecret(resolved.secretId, secretValue);
+	const apiKey = credentialFromSecret(resolved.id, resolved.secretId, secretValue);
 	if (!apiKey) return null;
 	return buildChatRequest({
 		providerId: resolved.id,
@@ -237,13 +237,19 @@ export class ChatCompletionClient implements CompletionClient {
 	async complete(input: CompletionInput, signal: AbortSignal): Promise<string> {
 		if (signal.aborted) throw new AbortError();
 		const request = buildChatRequest(input);
-		const response = await this.http.post(request.url, request.headers, request.body, signal);
+		let response: HttpResponse;
+		try {
+			response = await this.http.post(request.url, request.headers, request.body, signal);
+		} catch (error) {
+			if (isAbortError(error)) throw error;
+			throw new Error('The provider could not be reached.');
+		}
 		if (signal.aborted) throw new AbortError();
 		if (response.status < 200 || response.status >= 300) {
-			const detail = redactSecrets(readErrorMessage(response.body), [input.apiKey]);
+			// Provider error bodies can quote the note. Only the synthetic connection test displays them.
 			throw new Error(friendlyHttpError(
 				response.status,
-				detail,
+				'',
 				PROVIDERS[input.providerId].label,
 				input.apiKey.trim().length > 0,
 			));

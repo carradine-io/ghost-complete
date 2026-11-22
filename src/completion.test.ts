@@ -332,24 +332,25 @@ describe('CompletionSession', () => {
 		expect(calls).toBe(2);
 	});
 
-	it('redacts the API key from a failed HTTP response', async () => {
+	it('keeps upstream error text and credentials out of autocomplete notices', async () => {
 		const http: HttpPost = {
 			async post() {
 				return {
 					status: 401,
-					body: JSON.stringify({ error: { message: 'rejected openrouter-test-key' } }),
+					body: JSON.stringify({ error: { message: 'private note text and openrouter-test-key' } }),
 				};
 			},
 		};
 		const session = new CompletionSession(new ChatCompletionClient(http), new CompletionCache());
 		await expect(session.request(input())).rejects.toThrow(
-			'OpenRouter rejected the API key (HTTP 401): rejected [redacted]',
+			'OpenRouter rejected the API key (HTTP 401).',
 		);
 		try {
 			await session.request(input());
 		} catch (error) {
 			const message = error instanceof Error ? error.message : '';
 			expect(message).not.toContain('openrouter-test-key');
+			expect(message).not.toContain('private note text');
 		}
 	});
 
