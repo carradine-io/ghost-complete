@@ -24,6 +24,7 @@ export interface GhostHost {
 	readonly client: CompletionClient;
 	setPhase(phase: StatusPhase): void;
 	reportError(error: unknown): void;
+	reportMissingKey(): void;
 }
 
 interface GhostSuggestion {
@@ -200,7 +201,7 @@ class GhostController {
 		void this.host.getResolvedProvider().then((resolved) => {
 			if (this.destroyed || token !== this.token) return;
 			if (!resolved.apiKey) {
-				this.host.setPhase('no-key');
+				this.host.reportMissingKey();
 				return;
 			}
 			this.host.setPhase('on');
@@ -240,7 +241,7 @@ class GhostController {
 
 		const resolved = await this.host.getResolvedProvider();
 		if (!resolved.apiKey) {
-			this.host.setPhase('no-key');
+			this.host.reportMissingKey();
 			return;
 		}
 

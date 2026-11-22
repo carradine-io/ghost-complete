@@ -45,10 +45,8 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 					},
 				},
 			},
-			passwordKey(this.plugin, 'openrouter'),
-			secretKey('Linked OpenRouter secret', 'openrouter'),
-			passwordKey(this.plugin, 'groq'),
-			secretKey('Linked Groq secret', 'groq'),
+			secretKey('OpenRouter API key', 'openrouter'),
+			secretKey('Groq API key', 'groq'),
 			{
 				name: 'Test connection',
 				desc: this.plugin.lastConnectionReport
@@ -177,32 +175,11 @@ export class GhostCompleteSettingTab extends PluginSettingTab {
 	}
 }
 
-function passwordKey(plugin: GhostCompletePlugin, providerId: ProviderId): SettingDefinitionItem {
-	const provider = PROVIDERS[providerId];
-	return {
-		name: `${provider.label} API key`,
-		desc: `Saved in this plugin's data and sent only to ${provider.baseUrl}. Used when the linked secret is missing.`,
-		render: (setting) => {
-			setting.addText((text) => {
-				text.inputEl.type = 'password';
-				text.inputEl.autocomplete = 'off';
-				text.inputEl.spellcheck = false;
-				text.setPlaceholder('Paste key');
-				text.setValue(plugin.settings.apiKeys[providerId]);
-				text.onChange(async (value) => {
-					plugin.settings.apiKeys[providerId] = value;
-					await plugin.saveSettings();
-				});
-			});
-		},
-	};
-}
-
 function secretKey(name: string, providerId: ProviderId): SettingDefinitionItem {
 	const provider = PROVIDERS[providerId];
 	return {
 		name,
-		desc: `Optional. Link a secret from Obsidian's secret storage. Its value is sent only to ${provider.baseUrl} and overrides the password field.`,
+		desc: `Link a secret from Obsidian's secret storage. Only the secret id is saved in plugin data. The key is sent only to ${provider.baseUrl}.`,
 		control: {
 			type: 'secret',
 			key: providerId === 'openrouter' ? 'openrouterSecretId' : 'groqSecretId',

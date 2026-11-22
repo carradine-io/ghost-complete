@@ -13,7 +13,8 @@ import { createGhostExtension, notifyGhostSettings, type GhostHost, type StatusP
 import { createObsidianHttp } from './http';
 import { PROVIDERS } from './providers';
 import {
-	chooseCredential,
+	credentialFromSecret,
+	prepareSettings,
 	normalizeSettings,
 	resolveProvider,
 	storedSecrets,
@@ -70,7 +71,7 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	async getResolvedProvider(): Promise<ResolvedProvider> {
 		const resolved = resolveProvider(this.settings);
 		const secretValue = await readSecretValue(this.app.secretStorage, resolved.secretId);
-		const apiKey = chooseCredential(resolved.secretId, secretValue, resolved.directKey);
+		const apiKey = credentialFromSecret(resolved.secretId, secretValue);
 		this.activeApiKey = apiKey;
 		return { ...resolved, apiKey };
 	}
@@ -80,7 +81,9 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = normalizeSettings(await this.loadData());
+		const prepared = prepareSettings(await this.loadData());
+		this.settings = prepared.settings;
+		if (prepared.removedPlaintext) await this.saveData(this.settings);
 	}
 
 	async saveSettings(): Promise<void> {
@@ -131,6 +134,18 @@ export default class GhostCompletePlugin extends Plugin implements GhostHost {
 			status: outcome.status,
 			providerMessage: outcome.providerMessage,
 		});
+	}
+
+	reportMissingKey(): void {
+		const providerLabel = PROVIDERS[this.settings.provider].label;
+		const message = `No API key set for ${providerLabel}.`;
+		this.activeApiKey = '';
+		this.setPhase('no-key');
+		const now = Date.now();
+		if (message === this.lastError && now - this.lastErrorAt < 8000) return;
+		this.lastError = message;
+		this.lastErrorAt = now;
+		new Notice(`Ghost Complete: ${message}`, 6000);
 	}
 
 	reportError(error: unknown): void {

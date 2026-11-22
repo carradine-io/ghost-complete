@@ -3,9 +3,7 @@ import { isProviderId, PROVIDERS, type ProviderId } from './providers';
 export interface GhostCompleteSettings {
 	enabled: boolean;
 	provider: ProviderId;
-	/** Raw keys saved by the password fields. */
-	apiKeys: Record<ProviderId, string>;
-	/** Optional Obsidian secret-storage ids. The secret value is not stored here. */
+	/** Obsidian secret-storage ids. The secret values are not stored here. */
 	secretIds: Record<ProviderId, string>;
 	/** Editable model id. Selecting a provider replaces this with that provider's suggested default. */
 	model: string;
@@ -19,19 +17,17 @@ export interface ResolvedProvider {
 	id: ProviderId;
 	baseUrl: string;
 	model: string;
-	directKey: string;
 	secretId: string;
-	/** Credential that should be sent. Empty until chooseCredential fills it. */
+	/** Credential from secret storage. Empty when no secret resolves. */
 	apiKey: string;
 }
+
+/** Fields that must never remain in plugin data. */
+export const PLAINTEXT_KEY_FIELDS = ['apiKeys', 'apiKey', 'openrouterApiKey', 'groqApiKey'] as const;
 
 export const DEFAULT_SETTINGS: GhostCompleteSettings = {
 	enabled: true,
 	provider: 'openrouter',
-	apiKeys: {
-		openrouter: '',
-		groq: '',
-	},
 	secretIds: {
 		openrouter: '',
 		groq: '',
@@ -56,12 +52,11 @@ export function parseBoundedInt(value: unknown, fallback: number, min: number, m
 export function normalizeSettings(data: unknown): GhostCompleteSettings {
 	const raw = isRecord(data) ? data : {};
 	const provider = isProviderId(raw.provider) ? raw.provider : DEFAULT_SETTINGS.provider;
-	const apiKeys = isRecord(raw.apiKeys) ? raw.apiKeys : {};
+	const legacyKeys = isRecord(raw.apiKeys) ? raw.apiKeys : {};
 	const storedSecretIds = isRecord(raw.secretIds) ? raw.secretIds : null;
-	const hadSecretIds = storedSecretIds !== null;
 	const secretIds = storedSecretIds ?? {};
-	const openrouter = migrateStoredKey(asString(apiKeys.openrouter), asString(secretIds.openrouter), hadSecretIds);
-	const groq = migrateStoredKey(asString(apiKeys.groq), asString(secretIds.groq), hadSecretIds);
+	const openrouterSecretId = secretIdFromLegacy(asString(legacyKeys.openrouter), asString(secretIds.openrouter));
+	const groqSecretId = secretIdFromLegacy(asString(legacyKeys.groq), asString(secretIds.groq));
 	const model = typeof raw.model === 'string' && raw.model.trim()
 		? raw.model
 		: PROVIDERS[provider].defaultModel;
@@ -69,13 +64,9 @@ export function normalizeSettings(data: unknown): GhostCompleteSettings {
 	return {
 		enabled: raw.enabled !== false,
 		provider,
-		apiKeys: {
-			openrouter: openrouter.key,
-			groq: groq.key,
-		},
 		secretIds: {
-			openrouter: openrouter.secretId,
-			groq: groq.secretId,
+			openrouter: openrouterSecretId,
+			groq: groqSecretId,
 		},
 		model,
 		debounceMs: parseBoundedInt(raw.debounceMs, DEFAULT_SETTINGS.debounceMs, 50, 5000),
@@ -87,7 +78,7 @@ export function normalizeSettings(data: unknown): GhostCompleteSettings {
 
 /**
  * Point completions at a provider and fill in its suggested model.
- * API keys are left untouched so a Groq key can never replace an OpenRouter key, or the reverse.
+ * Secret ids are left untouched so a Groq secret can never replace an OpenRouter secret, or the reverse.
  */
 export function selectProvider(settings: GhostCompleteSettings, providerId: ProviderId): void {
 	settings.provider = providerId;
@@ -95,7 +86,8 @@ export function selectProvider(settings: GhostCompleteSettings, providerId: Prov
 }
 
 /**
- * The base URL always comes from the provider id, and the key always comes from that provider's slot.
+ * The base URL always comes from the provider id.
+ * apiKey stays empty until a secret value is resolved.
  */
 export function resolveProvider(settings: GhostCompleteSettings): ResolvedProvider {
 	const provider = PROVIDERS[settings.provider];
@@ -103,38 +95,45 @@ export function resolveProvider(settings: GhostCompleteSettings): ResolvedProvid
 		id: provider.id,
 		baseUrl: provider.baseUrl,
 		model: settings.model.trim() || provider.defaultModel,
-		directKey: settings.apiKeys[provider.id],
 		secretId: settings.secretIds[provider.id].trim(),
 		apiKey: '',
 	};
 }
 
 /**
- * Prefer a resolved secret. Otherwise use the password-field key.
- * An unresolved secret id is never returned, so it cannot be sent as a bearer token.
+ * Return the secret value only. An unresolved id is never used as a token.
  */
-export function chooseCredential(secretId: string, secretValue: string | null, directKey: string): string {
-	const fromSecret = typeof secretValue === 'string' ? normalizeCredential(secretValue) : '';
-	if (fromSecret) return fromSecret;
-	const direct = normalizeCredential(directKey);
-	if (!direct) return '';
-	if (secretId && direct === secretId.trim()) return '';
-	if (!secretId && looksLikeSecretId(direct)) return '';
-	return direct;
+export function credentialFromSecret(secretId: string, secretValue: string | null): string {
+	if (!secretId.trim() || typeof secretValue !== 'string') return '';
+	const credential = normalizeCredential(secretValue);
+	if (!credential || credential === secretId.trim()) return '';
+	return credential;
+}
+
+export function hasPlaintextKeyFields(data: unknown): boolean {
+	if (!isRecord(data)) return false;
+	return PLAINTEXT_KEY_FIELDS.some((field) => field in data);
+}
+
+export function prepareSettings(data: unknown): { settings: GhostCompleteSettings; removedPlaintext: boolean } {
+	return {
+		settings: normalizeSettings(data),
+		removedPlaintext: hasPlaintextKeyFields(data),
+	};
 }
 
 export function looksLikeSecretId(value: string): boolean {
 	return /^[a-z0-9-]{1,64}$/.test(value);
 }
 
-function migrateStoredKey(rawKey: string, rawSecretId: string, hadSecretIds: boolean): { key: string; secretId: string } {
-	if (rawSecretId) return { key: rawKey, secretId: rawSecretId };
-	if (!hadSecretIds && looksLikeSecretId(rawKey)) return { key: '', secretId: rawKey };
-	return { key: rawKey, secretId: '' };
+function secretIdFromLegacy(rawKey: string, rawSecretId: string): string {
+	const secretId = rawSecretId.trim();
+	if (secretId) return secretId;
+	return looksLikeSecretId(rawKey) ? rawKey : '';
 }
 
 export function storedSecrets(settings: GhostCompleteSettings): string[] {
-	return [settings.apiKeys.openrouter, settings.apiKeys.groq];
+	return [settings.secretIds.openrouter, settings.secretIds.groq];
 }
 
 /** Make a credential safe to put in an Authorization header. */

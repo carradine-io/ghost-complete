@@ -2,7 +2,7 @@ import { AbortError, isAbortError } from './abort';
 import { CompletionCache } from './cache';
 import { postprocessCompletion } from './postprocess';
 import { PROVIDERS, type ProviderId } from './providers';
-import { chooseCredential, resolveProvider, type GhostCompleteSettings } from './settings';
+import { credentialFromSecret, resolveProvider, type GhostCompleteSettings } from './settings';
 
 export interface CompletionInput {
 	providerId: ProviderId;
@@ -70,7 +70,6 @@ export function buildChatRequest(input: CompletionInput): ChatHttpRequest {
 
 	if (input.providerId === 'openrouter') {
 		headers['X-Title'] = 'Ghost Complete';
-		headers['x-api-key'] = input.apiKey;
 		payload.max_tokens = input.maxTokens;
 		payload.reasoning = { effort: 'none', exclude: true };
 	} else {
@@ -105,7 +104,7 @@ export function buildRequestForSettings(
 ): ChatHttpRequest | null {
 	const resolved = resolveProvider(settings);
 	const secretValue = resolved.secretId ? readSecret(resolved.secretId) : null;
-	const apiKey = chooseCredential(resolved.secretId, secretValue, resolved.directKey);
+	const apiKey = credentialFromSecret(resolved.secretId, secretValue);
 	if (!apiKey) return null;
 	return buildChatRequest({
 		providerId: resolved.id,
@@ -123,7 +122,7 @@ export function friendlyHttpError(
 	providerLabel: string,
 	hasApiKey: boolean,
 ): string {
-	if (status === 401 && !hasApiKey) return `No API key is set for ${providerLabel}.`;
+	if (status === 401 && !hasApiKey) return `No API key set for ${providerLabel}.`;
 	if (status === 401) {
 		const cleaned = detail.trim();
 		return cleaned
@@ -142,7 +141,9 @@ export interface ConnectionReport {
 }
 
 export function formatConnectionReport(report: ConnectionReport): string {
-	if (!report.keyFound) return `${report.providerLabel}: key found: no. No request was sent.`;
+	if (!report.keyFound) {
+		return `${report.providerLabel}: key found: no. No API key set for ${report.providerLabel}. No request was sent.`;
+	}
 	const status = report.status === null ? 'no response' : `HTTP ${report.status}`;
 	const detail = report.providerMessage ? ` ${report.providerMessage}` : '';
 	return `${report.providerLabel}: key found: yes. ${status}.${detail}`;
