@@ -6,6 +6,7 @@ It is not affiliated with or endorsed by Dynalist Inc. Obsidian is a trademark o
 
 ## Features
 
+- By default, type three characters before suggestions start. Moving the cursor, accepting a suggestion, or leaving the editor starts a new count. Set **Minimum typed characters** to **0** for automatic suggestions while navigating a note.
 - After a short pause (400ms by default), a grey suggestion appears at the cursor in the Markdown editor.
 - **Tab** inserts the suggested continuation of the current line. Additional lines from the provider are discarded. **Right Arrow** inserts the next word. **Escape** dismisses it.
 - Tab and Right Arrow keep their normal editor behavior when no suggestion is showing.

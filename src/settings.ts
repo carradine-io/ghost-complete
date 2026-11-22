@@ -7,6 +7,7 @@ export interface GhostCompleteSettings {
 	secretIds: Record<ProviderId, string>;
 	/** Editable model id. Selecting a provider replaces this with that provider's suggested default. */
 	model: string;
+	minTypedChars: number;
 	debounceMs: number;
 	maxTokens: number;
 	prefixChars: number;
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: GhostCompleteSettings = {
 		groq: '',
 	},
 	model: PROVIDERS.openrouter.defaultModel,
+	minTypedChars: 3,
 	debounceMs: 400,
 	maxTokens: 64,
 	prefixChars: 2000,
@@ -69,6 +71,7 @@ export function normalizeSettings(data: unknown): GhostCompleteSettings {
 			groq: groqSecretId,
 		},
 		model,
+		minTypedChars: parseBoundedInt(raw.minTypedChars, DEFAULT_SETTINGS.minTypedChars, 0, 100),
 		debounceMs: parseBoundedInt(raw.debounceMs, DEFAULT_SETTINGS.debounceMs, 50, 5000),
 		maxTokens: parseBoundedInt(raw.maxTokens, DEFAULT_SETTINGS.maxTokens, 8, 512),
 		prefixChars: parseBoundedInt(raw.prefixChars, DEFAULT_SETTINGS.prefixChars, 100, 20000),
