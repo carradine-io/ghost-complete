@@ -105,7 +105,7 @@ git tag -a 0.1.0 -m "0.1.0"
 git push origin 0.1.0
 ```
 
-The GitHub Actions workflow builds the plugin on pulls and on `main`. On a version tag that matches `manifest.json`, it creates a draft GitHub release with `main.js`, `manifest.json`, and `styles.css` attached. In the repository settings, Actions need read and write permission so the release step can upload assets. Publish the draft after you add release notes.
+The GitHub Actions workflow builds the plugin on pulls and on `main`. On a version tag that matches `manifest.json`, it creates a draft GitHub release with `main.js`, `manifest.json`, and `styles.css` attached. Routine builds use a read-only repository token. A separate job attaches and attests the validated tag build with release permissions. Publish the draft after you add release notes.
 
 The release tag must match `manifest.json` exactly. Obsidian's community list uses that tag, without a `v` prefix.
 
